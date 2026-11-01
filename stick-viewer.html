@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Right Stick Overlay</title>
+<style>
+  :root { color-scheme: dark; --stick-size: 156px; --green: #00f51a; --text: #dedede; --muted: #a9a9a9; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  body { font-family: Arial, Helvetica, sans-serif; color: var(--text); }
+  .overlay { display: flex; align-items: center; gap: 27px; width: max-content; min-width: 315px; padding: 10px 12px; background: transparent; }
+  .stick { position: relative; flex: 0 0 var(--stick-size); width: var(--stick-size); height: var(--stick-size); border: 2.5px solid #f4f4f4; border-radius: 50%; }
+  .axis-x, .axis-y { position: absolute; background: #d7d7d7; opacity: .8; }
+  .axis-x { height: 1.5px; left: 0; right: 0; top: 50%; transform: translateY(-50%); }
+  .axis-y { width: 1.5px; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); }
+  .inner-ring { position: absolute; width: 68%; height: 68%; left: 16%; top: 16%; border: 1px dashed #aaa; opacity: .8; border-radius: 50%; }
+  .center { position: absolute; width: 6px; height: 6px; left: 50%; top: 50%; transform: translate(-50%,-50%); background: #aaa; border-radius: 50%; z-index: 2; }
+  .vector { position: absolute; height: 2px; left: 50%; top: 50%; width: 0; transform-origin: left center; background: var(--green); z-index: 3; }
+  .dot { position: absolute; width: 12px; height: 12px; left: 50%; top: 50%; border-radius: 50%; background: var(--green); border: 1px solid #111; transform: translate(-50%,-50%); z-index: 4; }
+  .readout { width: 116px; display: flex; flex-direction: column; justify-content: center; gap: 7px; align-self: stretch; padding: 5px 0; }
+  .value { font-size: 30px; line-height: 1.1; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .value.positive { color: #dedede; }
+  .value.negative { color: #dedede; }
+  .label { font-size: 0px; line-height: 1.1; color: var(--muted); margin-top: 5px; }
+  .axis { display: flex; flex-direction: column; gap: 0; }
+  @media (max-width: 330px) { :root { --stick-size: 130px; } .overlay { gap: 15px; min-width: 0; } .readout { width: 100px; } }
+</style>
+</head>
+<body>
+  <main class="overlay" aria-label="Right analog stick position">
+    <div class="stick" aria-hidden="true">
+      <div class="axis-x"></div><div class="axis-y"></div><div class="inner-ring"></div>
+      <div class="center"></div><div class="vector" id="vector"></div><div class="dot" id="dot"></div>
+    </div>
+    <div class="readout">
+      <div class="axis"><div class="value positive" id="x-value">+0.00</div><div class="label">X axis</div></div>
+      <div class="axis"><div class="value negative" id="y-value">+0.00</div><div class="label">Y axis</div></div>
+    </div>
+  </main>
+<script>
+(() => {
+  'use strict';
+  const xValue = document.getElementById('x-value');
+  const yValue = document.getElementById('y-value');
+  const vector = document.getElementById('vector');
+  const dot = document.getElementById('dot');
+  const stick = document.querySelector('.stick');
+  const DEADZONE = 0.015;
+  let activeIndex = null;
+  let candidateSince = new Map();
+
+  // Mirrors the viewer's activation pattern: a controller becomes active after
+  // a button is held briefly. If the active controller disconnects, auto-select again.
+  function chooseGamepad(gamepads, now) {
+    if (activeIndex !== null) {
+      const active = gamepads[activeIndex];
+      if (active && active.connected) return active;
+      activeIndex = null;
+    }
+    for (const pad of gamepads) {
+      if (!pad || !pad.connected) continue;
+      const held = pad.buttons.some(button => button && button.pressed);
+      if (held) {
+        if (!candidateSince.has(pad.index)) candidateSince.set(pad.index, now);
+        if (now - candidateSince.get(pad.index) >= 650) {
+          activeIndex = pad.index;
+          return pad;
+        }
+      } else {
+        candidateSince.delete(pad.index);
+      }
+    }
+    return null;
+  }
+
+  function format(value) {
+    if (Math.abs(value) < DEADZONE) value = 0;
+    return (value >= 0 ? '+' : '') + value.toFixed(2);
+  }
+  function render(x, y) {
+    x = Math.max(-1, Math.min(1, x || 0));
+    y = Math.max(-1, Math.min(1, y || 0));
+    if (Math.abs(x) < DEADZONE) x = 0;
+    if (Math.abs(y) < DEADZONE) y = 0;
+    xValue.textContent = format(x);
+    yValue.textContent = format(y);
+    xValue.className = 'value ' + (x >= 0 ? 'positive' : 'negative');
+    yValue.className = 'value ' + (y >= 0 ? 'positive' : 'negative');
+
+    const radius = stick.clientWidth / 2 - 7;
+    // Gamepad API's Y axis is positive downward; the overlay's visual Y is inverted.
+    const px = x * radius;
+    const py = y * radius;
+    const length = Math.hypot(px, py);
+    const angle = Math.atan2(py, px) * 180 / Math.PI;
+    vector.style.width = length + 'px';
+    vector.style.transform = `rotate(${angle}deg)`;
+    dot.style.left = `calc(50% + ${px}px)`;
+    dot.style.top = `calc(50% + ${py}px)`;
+  }
+  function frame(now) {
+    const gamepads = Array.from(navigator.getGamepads ? navigator.getGamepads() : []);
+    const pad = chooseGamepad(gamepads, now);
+    if (pad) {
+      // Standard mapping: axes 2 and 3 are the right stick on most controllers.
+      // For non-standard controllers, change these two indices here.
+      render(pad.axes[2] ?? 0, pad.axes[3] ?? 0);
+    } else {
+      render(0, 0);
+    }
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener('gamepaddisconnected', event => {
+    candidateSince.delete(event.gamepad.index);
+    if (activeIndex === event.gamepad.index) activeIndex = null;
+  });
+  window.addEventListener('gamepadconnected', () => {
+    // Polling is intentional: some browsers expose the controller after a button press.
+  });
+  if ('getGamepads' in navigator) requestAnimationFrame(frame);
+  else document.body.textContent = 'This browser does not support the Gamepad API.';
+})();
+</script>
+</body>
+</html>
