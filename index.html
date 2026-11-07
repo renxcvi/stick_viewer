@@ -109,7 +109,7 @@
     } else {
       render(0, 0);
     }
-    requestAnimationFrame(frame);
+    setTimeout(() => frame(performance.now()), 16);
   }
   window.addEventListener('gamepaddisconnected', event => {
     candidateSince.delete(event.gamepad.index);
@@ -118,7 +118,9 @@
   window.addEventListener('gamepadconnected', () => {
     // Polling is intentional: some browsers expose the controller after a button press.
   });
-  if ('getGamepads' in navigator) requestAnimationFrame(frame);
+  if ('getGamepads' in navigator) {
+    frame(performance.now());
+  }
   else document.body.textContent = 'This browser does not support the Gamepad API.';
 })();
 </script>
